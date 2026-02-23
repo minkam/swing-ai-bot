@@ -44,11 +44,22 @@ def send_message(text):
 import sys
 
 def run_scanner():
+    import sys
+
+def run_scanner():
     result = subprocess.run(
         [sys.executable, "scan_today.py"],
         capture_output=True,
         text=True
     )
+
+    if result.returncode != 0:
+        return f"Scanner error:\n{result.stderr}"
+
+    if not result.stdout.strip():
+        return "No output from scanner."
+
+    return result.stdout   )
     return result.stdout
 def get_top_movers():
     data = yf.download(SP500, period="2d", interval="1d", progress=False)
