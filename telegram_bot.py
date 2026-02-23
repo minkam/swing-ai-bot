@@ -2,6 +2,7 @@ import requests
 import time
 import subprocess
 import os
+import sys
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
@@ -22,17 +23,14 @@ last_update_id = None
 last_morning_alert = None
 last_eod_report = None
 
-# Simplified S&P 500 list (reliable subset)
 SP500 = [
-    "AAPL","MSFT","NVDA","GOOGL","AMZN","META","TSLA","BRK-B","UNH","JPM",
-    "V","XOM","LLY","MA","AVGO","HD","PG","MRK","COST","PEP",
-    "ABBV","KO","ADBE","CRM","BAC","WMT","MCD","CSCO","TMO","ACN",
-    "LIN","ABT","NFLX","AMD","CMCSA","DIS","ORCL","INTC","VZ","TXN",
-    "PFE","NEE","INTU","PM","QCOM","NKE","HON","DHR","AMGN","IBM"
+    "AAPL","MSFT","NVDA","GOOGL","AMZN","META","TSLA","JPM","V","XOM",
+    "LLY","MA","HD","PG","MRK","COST","PEP","ABBV","KO","ADBE",
+    "CRM","BAC","WMT","MCD","CSCO","NFLX","AMD","DIS","ORCL","INTC"
 ]
 
 def send_message(text):
-    if not text.strip():
+    if not text or not text.strip():
         text = "No data available."
     requests.post(
         SEND_URL,
@@ -41,10 +39,6 @@ def send_message(text):
             "text": text
         }
     )
-import sys
-
-def run_scanner():
-    import sys
 
 def run_scanner():
     result = subprocess.run(
@@ -57,10 +51,10 @@ def run_scanner():
         return f"Scanner error:\n{result.stderr}"
 
     if not result.stdout.strip():
-        return "No output from scanner."
+        return "No high-quality trade today."
 
-    return result.stdout   )
     return result.stdout
+
 def get_top_movers():
     data = yf.download(SP500, period="2d", interval="1d", progress=False)
 
@@ -69,10 +63,7 @@ def get_top_movers():
 
     movers = pct_change.sort_values(ascending=False)
 
-    top_gainers = movers.head(10)
-    top_losers = movers.tail(10)
-
-    return top_gainers, top_losers
+    return movers.head(10), movers.tail(10)
 
 def format_eod_report():
     gainers, losers = get_top_movers()
@@ -93,25 +84,23 @@ def check_morning_alert():
     global last_morning_alert
     now = datetime.now(eastern)
 
-    if now.weekday() < 5:
-        if now.hour == 9 and now.minute == 35:
-            today_str = now.strftime("%Y-%m-%d")
-            if last_morning_alert != today_str:
-                signal = run_scanner()
-                send_message("📈 MORNING SIGNAL\n\n" + signal)
-                last_morning_alert = today_str
+    if now.weekday() < 5 and now.hour == 9 and now.minute == 35:
+        today_str = now.strftime("%Y-%m-%d")
+        if last_morning_alert != today_str:
+            signal = run_scanner()
+            send_message("📈 MORNING SIGNAL\n\n" + signal)
+            last_morning_alert = today_str
 
 def check_eod_report():
     global last_eod_report
     now = datetime.now(eastern)
 
-    if now.weekday() < 5:
-        if now.hour == 16 and now.minute == 10:
-            today_str = now.strftime("%Y-%m-%d")
-            if last_eod_report != today_str:
-                report = format_eod_report()
-                send_message(report)
-                last_eod_report = today_str
+    if now.weekday() < 5 and now.hour == 16 and now.minute == 10:
+        today_str = now.strftime("%Y-%m-%d")
+        if last_eod_report != today_str:
+            report = format_eod_report()
+            send_message(report)
+            last_eod_report = today_str
 
 def check_messages():
     global last_update_id
