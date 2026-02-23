@@ -55,7 +55,7 @@ def auto_morning_alert():
     # Weekdays only
     if now.weekday() < 5:
         # 9:25 AM trigger window
-        if True:
+        if now.hour == 9 and now.minute == 25:
             today_str = now.strftime("%Y-%m-%d")
 
             if last_alert_date != today_str:
