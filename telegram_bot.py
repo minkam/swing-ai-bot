@@ -41,15 +41,15 @@ def send_message(text):
             "text": text
         }
     )
+import sys
 
 def run_scanner():
     result = subprocess.run(
-        ["python", "scan_today.py"],
+        [sys.executable, "scan_today.py"],
         capture_output=True,
         text=True
     )
     return result.stdout
-
 def get_top_movers():
     data = yf.download(SP500, period="2d", interval="1d", progress=False)
 
