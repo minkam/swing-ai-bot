@@ -31,7 +31,6 @@ def send_message(text):
     except Exception as e:
         print("Telegram send error:", e)
 
-
 # ==============================
 # RUN LONG SCANNER
 # ==============================
@@ -58,13 +57,12 @@ def run_scanner():
         output = result.stdout.strip()
 
         if not output:
-            return "Scanner ran but returned empty output."
+            return "No high-quality long setup today."
 
         return output
 
     except Exception as e:
         return f"Scanner exception:\n{str(e)}"
-
 
 # ==============================
 # RUN MARKET RECAP
@@ -73,10 +71,13 @@ def run_scanner():
 def run_recap():
     try:
         result = subprocess.run(
-            ["python3", "market_recap.py"],  # IMPORTANT: python3
+            ["python3", "market_recap.py"],
             capture_output=True,
             text=True
         )
+
+        if result.returncode != 0:
+            return f"Recap crashed:\n{result.stderr}"
 
         output = result.stdout.strip()
 
@@ -86,8 +87,7 @@ def run_recap():
         return output
 
     except Exception as e:
-        return f"Recap error:\n{str(e)}"
-
+        return f"Recap exception:\n{str(e)}"
 
 # ==============================
 # WEBHOOK ROUTE
@@ -100,25 +100,23 @@ def webhook():
 
         if data and "message" in data:
             text = data["message"].get("text", "").lower()
-
             print("Received:", text)
 
             if "signal" in text:
-                send_message("🔍 Scanning for high-probability LONG setups...")
                 output = run_scanner()
-                send_message(output)
+                final_message = "🔍 Swing Scan Result:\n\n" + output
+                send_message(final_message)
 
             elif "recap" in text:
-                send_message("📊 Generating market recap...")
                 output = run_recap()
-                send_message(output)
+                final_message = "📊 Market Recap:\n\n" + output
+                send_message(final_message)
 
         return "ok"
 
     except Exception as e:
         print("Webhook error:", e)
         return "error", 500
-
 
 # ==============================
 # START SERVER (Railway)
