@@ -1,88 +1,77 @@
 import pandas as pd
-import xgboost as xgb
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
 import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from xgboost import XGBClassifier
+import joblib
 
 # =========================
 # LOAD DATA
 # =========================
 
 df = pd.read_csv("dataset.csv")
-df = df.dropna()
 
-FEATURES = ["return_5", "return_10", "dist_sma20", "rsi"]
+# =========================
+# SELECT FEATURES
+# =========================
 
-X = df[FEATURES]
+features = [
+    "return_5",
+    "return_10",
+    "dist_sma20",
+    "rsi",
+    "volume_spike",
+    "above_sma20",
+    "above_sma50",
+    "above_sma200",
+    "breakout_20d"
+]
 
-y_long = df["long_target"]
-y_short = df["short_target"]
+X = df[features]
+y = df["target_long"]
 
 # =========================
 # TRAIN TEST SPLIT
 # =========================
 
-X_train, X_test, y_long_train, y_long_test = train_test_split(
-    X, y_long, test_size=0.2, shuffle=False
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, shuffle=False
 )
 
-_, _, y_short_train, y_short_test = train_test_split(
-    X, y_short, test_size=0.2, shuffle=False
-)
+# Handle class imbalance automatically
+scale_pos_weight = (len(y_train) - y_train.sum()) / y_train.sum()
 
 # =========================
-# HANDLE CLASS IMBALANCE
+# MODEL (AGGRESSIVE)
 # =========================
 
-scale_long = (len(y_long_train) - np.sum(y_long_train)) / np.sum(y_long_train)
-scale_short = (len(y_short_train) - np.sum(y_short_train)) / np.sum(y_short_train)
-
-# =========================
-# LONG MODEL
-# =========================
-
-model_long = xgb.XGBClassifier(
-    n_estimators=400,
-    max_depth=4,
-    learning_rate=0.05,
+model = XGBClassifier(
+    n_estimators=500,
+    max_depth=6,
+    learning_rate=0.04,
     subsample=0.8,
     colsample_bytree=0.8,
-    scale_pos_weight=scale_long,
-    random_state=42
+    scale_pos_weight=scale_pos_weight,
+    random_state=42,
+    use_label_encoder=False,
+    eval_metric="logloss"
 )
 
-model_long.fit(X_train, y_long_train)
+model.fit(X_train, y_train)
 
-y_long_pred = model_long.predict(X_test)
+# =========================
+# EVALUATE
+# =========================
+
+preds = model.predict(X_test)
 
 print("\nLONG MODEL RESULTS")
-print("Accuracy:", accuracy_score(y_long_test, y_long_pred))
-print(classification_report(y_long_test, y_long_pred))
-
-model_long.save_model("model_long.json")
+print(classification_report(y_test, preds))
 
 # =========================
-# SHORT MODEL
+# SAVE MODEL
 # =========================
 
-model_short = xgb.XGBClassifier(
-    n_estimators=400,
-    max_depth=4,
-    learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    scale_pos_weight=scale_short,
-    random_state=42
-)
+model.save_model("model_long.json")
 
-model_short.fit(X_train, y_short_train)
-
-y_short_pred = model_short.predict(X_test)
-
-print("\nSHORT MODEL RESULTS")
-print("Accuracy:", accuracy_score(y_short_test, y_short_pred))
-print(classification_report(y_short_test, y_short_pred))
-
-model_short.save_model("model_short.json")
-
-print("\nModels saved successfully.")
+print("\nLong-only aggressive model saved successfully.")

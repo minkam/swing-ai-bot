@@ -1,183 +1,164 @@
 import pandas as pd
 import numpy as np
-import xgboost as xgb
 import yfinance as yf
-from datetime import datetime, timedelta
+from xgboost import XGBClassifier
 
 # =========================
 # SETTINGS
 # =========================
 
-THRESHOLD_SHARES = 0.75
-THRESHOLD_OPTIONS = 0.80
-RISK_SHARES = 0.02
-RISK_OPTIONS = 0.03
-ACCOUNT_SIZE = 3000
-MAX_HOLD = 5
-ATR_MULTIPLIER = 1.5
-
-FEATURES = ["return_5", "return_10", "dist_sma20", "rsi"]
+THRESHOLD = 0.80
+RISK_PER_TRADE = 60
+HOLD_DAYS = 5
 
 # =========================
-# LOAD DATASET
+# LOAD MODEL
 # =========================
 
-df = pd.read_csv("dataset.csv")
-
-if "Date" in df.columns:
-    df["Date"] = pd.to_datetime(df["Date"])
-
-df = df.dropna()
-
-latest_rows = df.sort_values("Date").groupby("Ticker").tail(1)
+model = XGBClassifier()
+model.load_model("model_long.json")
 
 # =========================
-# LOAD MODELS
+# FEATURES
 # =========================
 
-model_long = xgb.XGBClassifier()
-model_long.load_model("model_long.json")
-
-model_short = xgb.XGBClassifier()
-model_short.load_model("model_short.json")
-
-X = latest_rows[FEATURES]
-
-latest_rows["long_prob"] = model_long.predict_proba(X)[:, 1]
-latest_rows["short_prob"] = model_short.predict_proba(X)[:, 1]
-
-# =========================
-# MARKET REGIME (SPY 50 SMA)
-# =========================
-
-spy = yf.download("SPY", period="1y", interval="1d", progress=False)
-
-if isinstance(spy.columns, pd.MultiIndex):
-    spy.columns = spy.columns.get_level_values(0)
-
-spy["sma50"] = spy["Close"].rolling(50).mean()
-
-current_regime = (
-    "BULL"
-    if spy["Close"].iloc[-1] > spy["sma50"].iloc[-1]
-    else "BEAR"
-)
+features = [
+    "return_5",
+    "return_10",
+    "dist_sma20",
+    "rsi",
+    "volume_spike",
+    "above_sma20",
+    "above_sma50",
+    "above_sma200",
+    "breakout_20d"
+]
 
 # =========================
-# FIND BEST CANDIDATE
+# TICKERS
 # =========================
 
-candidates = []
-
-for _, row in latest_rows.iterrows():
-
-    if current_regime == "BULL" and row["long_prob"] >= THRESHOLD_SHARES:
-        candidates.append((row["Ticker"], "LONG", row["long_prob"]))
-
-    elif current_regime == "BEAR" and row["short_prob"] >= THRESHOLD_SHARES:
-        candidates.append((row["Ticker"], "SHORT", row["short_prob"]))
-
-if not candidates:
-    print("\nNo high-quality trade today.")
-    exit()
-
-candidates = sorted(candidates, key=lambda x: x[2], reverse=True)
-ticker, signal, prob = candidates[0]
+tickers = [
+    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA",
+    "JPM","V","MA","HD","XOM","LLY","PG","COST",
+    "ABBV","KO","BAC","CRM","WMT","MCD","NFLX",
+    "AMD","DIS","ORCL","INTC","TMO","ADBE","AVGO"
+]
 
 # =========================
-# LIVE PRICE + ATR
+# FEATURE BUILDER
 # =========================
 
-data = yf.download(ticker, period="6mo", interval="1d", progress=False)
+def build_features(df):
 
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = data.columns.get_level_values(0)
+    df["return_5"] = df["Close"].pct_change(5)
+    df["return_10"] = df["Close"].pct_change(10)
 
-price = data["Close"].iloc[-1]
+    df["sma20"] = df["Close"].rolling(20).mean()
+    df["sma50"] = df["Close"].rolling(50).mean()
+    df["sma200"] = df["Close"].rolling(200).mean()
 
-# ATR Calculation
-high_low = data["High"] - data["Low"]
-high_close = np.abs(data["High"] - data["Close"].shift())
-low_close = np.abs(data["Low"] - data["Close"].shift())
+    df["above_sma20"] = (df["Close"] > df["sma20"]).astype(int)
+    df["above_sma50"] = (df["Close"] > df["sma50"]).astype(int)
+    df["above_sma200"] = (df["Close"] > df["sma200"]).astype(int)
 
-ranges = pd.concat([high_low, high_close, low_close], axis=1)
-true_range = ranges.max(axis=1)
-atr = true_range.rolling(14).mean().iloc[-1]
+    df["dist_sma20"] = (df["Close"] - df["sma20"]) / df["sma20"]
 
-stop_distance = atr * ATR_MULTIPLIER
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    rs = avg_gain / avg_loss
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    df["volume_spike"] = df["Volume"] / df["Volume"].rolling(20).mean()
+
+    df["breakout_20d"] = (
+        df["Close"] > df["Close"].rolling(20).max().shift(1)
+    ).astype(int)
+
+    df["atr"] = (df["High"] - df["Low"]).rolling(14).mean()
+
+    return df
 
 # =========================
-# STOP + TARGET
+# SCAN
 # =========================
 
-if signal == "LONG":
-    stop_price = round(price - stop_distance, 2)
-    target_price = round(price + (stop_distance * 2), 2)
-else:
-    stop_price = round(price + stop_distance, 2)
-    target_price = round(price - (stop_distance * 2), 2)
+best_signal = None
 
-risk_per_share = abs(price - stop_price)
-shares = int((ACCOUNT_SIZE * RISK_SHARES) / risk_per_share)
+for ticker in tickers:
 
-# =========================
-# EARNINGS CHECK (SAFE)
-# =========================
+    try:
 
-earnings_warning = ""
+        df = yf.download(ticker, period="1y", progress=False)
 
-try:
-    earnings_data = yf.Ticker(ticker).calendar
+        if df.empty or len(df) < 200:
+            continue
 
-    if isinstance(earnings_data, pd.DataFrame) and not earnings_data.empty:
-        earnings_date = earnings_data.index[0]
-        if earnings_date < datetime.now() + timedelta(days=MAX_HOLD):
-            earnings_warning = "⚠ Earnings within hold window!"
+        # Flatten MultiIndex if needed
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
-    elif isinstance(earnings_data, dict) and len(earnings_data) > 0:
-        possible_date = list(earnings_data.values())[0]
-        if isinstance(possible_date, (pd.Timestamp, datetime)):
-            if possible_date < datetime.now() + timedelta(days=MAX_HOLD):
-                earnings_warning = "⚠ Earnings within hold window!"
+        df = build_features(df)
+        df = df.dropna()
 
-except Exception:
-    earnings_warning = ""
+        latest = df.iloc[-1]
+
+        X = latest[features].values.reshape(1, -1)
+        prob = model.predict_proba(X)[0][1]
+
+        if prob > THRESHOLD:
+
+            entry = latest["Close"]
+            atr = latest["atr"]
+
+            stop = entry - atr * 1.5
+            risk = entry - stop
+
+            if risk <= 0:
+                continue
+
+            target = entry + 3 * risk
+            shares = int(RISK_PER_TRADE / risk)
+
+            signal = {
+                "ticker": ticker,
+                "prob": prob,
+                "entry": entry,
+                "stop": stop,
+                "target": target,
+                "shares": shares
+            }
+
+            if best_signal is None or prob > best_signal["prob"]:
+                best_signal = signal
+
+    except Exception:
+        continue
 
 # =========================
 # OUTPUT
 # =========================
 
-print("\n==============================")
-print("ADVANCED EXECUTION PLAN")
-print("==============================\n")
+if best_signal:
 
-print("Market Regime:", current_regime)
-print("Ticker:", ticker)
-print("Signal:", signal)
-print("Probability:", round(prob * 100, 2), "%")
-print("ATR:", round(atr, 2))
+    print("\n==============================")
+    print("AGGRESSIVE LONG EXECUTION PLAN")
+    print("==============================\n")
 
-if earnings_warning:
-    print(earnings_warning)
+    print("Ticker:", best_signal["ticker"])
+    print("Probability:", round(best_signal["prob"] * 100, 2), "%")
+    print("\nEntry:", round(best_signal["entry"], 2))
+    print("Stop:", round(best_signal["stop"], 2))
+    print("3R Target:", round(best_signal["target"], 2))
+    print("Shares:", best_signal["shares"])
+    print("Max Hold:", HOLD_DAYS, "days")
 
-print("\n------ SHARES TRADE ------")
-print("Entry Price:", round(price, 2))
-print("ATR Stop:", stop_price)
-print("2R Target:", target_price)
-print("Shares:", shares)
-print("Max Risk:", round(ACCOUNT_SIZE * RISK_SHARES, 2))
-print("Max Hold:", MAX_HOLD, "days")
+    print("\nTrailing Plan:")
+    print("• Move stop to breakeven at 1R")
+    print("• Trail 1 ATR after 2R")
 
-if prob >= THRESHOLD_OPTIONS:
-    print("\n------ OPTIONS BOOST ------")
-    print("Type:", "CALL" if signal == "LONG" else "PUT")
-    print("Expiration: 10–21 days out")
-    print("Strike: ATM")
-    print("Risk:", round(ACCOUNT_SIZE * RISK_OPTIONS, 2))
-    print("Exit: +100% gain or -50% loss")
-
-print("\nTrailing Stop Rules:")
-print("• Move stop to breakeven at 1R")
-print("• Trail 1 ATR once in profit")
-
-print("\n==============================\n")
+else:
+    print("No high-quality long setup today.")
