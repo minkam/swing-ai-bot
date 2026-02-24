@@ -3,6 +3,10 @@ import requests
 import subprocess
 import os
 
+# ==============================
+# ENV VARIABLES (Railway)
+# ==============================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -10,48 +14,104 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
 
+# ==============================
+# TELEGRAM SEND FUNCTION
+# ==============================
+
 def send_message(text):
-    requests.post(
-        f"{BASE_URL}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
-    )
+    try:
+        requests.post(
+            f"{BASE_URL}/sendMessage",
+            data={
+                "chat_id": CHAT_ID,
+                "text": text
+            },
+            timeout=10
+        )
+    except Exception as e:
+        print("Telegram send error:", e)
+
+
+# ==============================
+# RUN LONG SCANNER
+# ==============================
 
 def run_scanner():
     try:
         result = subprocess.run(
-            ["python", "scan_today.py"],
+            ["python3", "scan_today.py"],  # IMPORTANT: python3 for Railway
             capture_output=True,
             text=True
         )
+
         output = result.stdout.strip()
+
         if not output:
             return "No high-quality long setup today."
+
         return output
+
     except Exception as e:
         return f"Scanner error:\n{str(e)}"
 
+
+# ==============================
+# RUN MARKET RECAP
+# ==============================
+
+def run_recap():
+    try:
+        result = subprocess.run(
+            ["python3", "market_recap.py"],  # IMPORTANT: python3
+            capture_output=True,
+            text=True
+        )
+
+        output = result.stdout.strip()
+
+        if not output:
+            return "No recap data available."
+
+        return output
+
+    except Exception as e:
+        return f"Recap error:\n{str(e)}"
+
+
+# ==============================
+# WEBHOOK ROUTE
+# ==============================
+
 @app.route("/", methods=["POST"])
 def webhook():
-    data = request.get_json()
+    try:
+        data = request.get_json()
 
-    if data and "message" in data:
-        text = data["message"].get("text", "").lower()
+        if data and "message" in data:
+            text = data["message"].get("text", "").lower()
 
-        if "signal" in text:
-            send_message("🔍 Scanning...")
-            output = run_scanner()
-            send_message(output)
+            print("Received:", text)
 
-        elif "recap" in text:
-            send_message("📊 Generating recap...")
-            result = subprocess.run(
-                ["python", "market_recap.py"],
-                capture_output=True,
-                text=True
-            )
-            send_message(result.stdout)
+            if "signal" in text:
+                send_message("🔍 Scanning for high-probability LONG setups...")
+                output = run_scanner()
+                send_message(output)
 
-    return "ok"
+            elif "recap" in text:
+                send_message("📊 Generating market recap...")
+                output = run_recap()
+                send_message(output)
+
+        return "ok"
+
+    except Exception as e:
+        print("Webhook error:", e)
+        return "error", 500
+
+
+# ==============================
+# START SERVER (Railway)
+# ==============================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
