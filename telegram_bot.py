@@ -98,26 +98,34 @@ def webhook():
     try:
         data = request.get_json()
 
-        if data and "message" in data:
-            text = data["message"].get("text", "").lower()
-            print("Received:", text)
+        if not data or "message" not in data:
+            return "ok"
 
-            if "signal" in text:
-                output = run_scanner()
-                final_message = "🔍 Swing Scan Result:\n\n" + output
-                send_message(final_message)
+        text = data["message"].get("text", "").strip().lower()
+        print("Received:", text)
 
-            elif "recap" in text:
-                output = run_recap()
-                final_message = "📊 Market Recap:\n\n" + output
-                send_message(final_message)
+        # Normalize command (remove leading slash)
+        if text.startswith("/"):
+            text = text[1:]
+
+        if text == "signal":
+            output = run_scanner()
+            final_message = "🔍 Swing Scan Result:\n\n" + output
+            send_message(final_message)
+
+        elif text == "recap":
+            output = run_recap()
+            final_message = "📊 Market Recap:\n\n" + output
+            send_message(final_message)
+
+        elif text == "start":
+            send_message("Bot is live. Type 'signal' or 'recap'.")
 
         return "ok"
 
     except Exception as e:
         print("Webhook error:", e)
         return "error", 500
-
 # ==============================
 # START SERVER (Railway)
 # ==============================
