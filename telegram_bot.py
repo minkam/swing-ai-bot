@@ -3,18 +3,10 @@ import time
 import subprocess
 import os
 
-# =========================
-# CONFIG
-# =========================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-
-# =========================
-# TELEGRAM FUNCTIONS
-# =========================
 
 def send_message(text):
     url = f"{BASE_URL}/sendMessage"
@@ -25,18 +17,15 @@ def send_message(text):
     requests.post(url, data=payload)
 
 
-def get_updates(offset=None):
+def get_updates(offset):
     url = f"{BASE_URL}/getUpdates"
-    params = {"timeout": 100}
-    if offset:
-        params["offset"] = offset
+    params = {
+        "timeout": 100,
+        "offset": offset
+    }
     response = requests.get(url, params=params)
     return response.json()
 
-
-# =========================
-# RUN SCANNER
-# =========================
 
 def run_scanner():
     try:
@@ -57,14 +46,16 @@ def run_scanner():
         return f"Scanner error:\n{str(e)}"
 
 
-# =========================
-# BOT LOOP
-# =========================
-
 def main():
-
     print("Bot running...")
-    last_update_id = None
+
+    # VERY IMPORTANT:
+    # On startup, skip old messages
+    updates = requests.get(f"{BASE_URL}/getUpdates").json()
+    if "result" in updates and len(updates["result"]) > 0:
+        last_update_id = updates["result"][-1]["update_id"] + 1
+    else:
+        last_update_id = None
 
     while True:
 
@@ -77,6 +68,8 @@ def main():
 
                 if "message" in update:
                     text = update["message"].get("text", "").lower()
+
+                    print("Received:", text)
 
                     if "signal" in text:
                         send_message("🔍 Scanning...")
