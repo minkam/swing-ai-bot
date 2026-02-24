@@ -39,20 +39,31 @@ def send_message(text):
 def run_scanner():
     try:
         result = subprocess.run(
-            ["python3", "scan_today.py"],  # IMPORTANT: python3 for Railway
+            ["python3", "scan_today.py"],
             capture_output=True,
             text=True
         )
 
+        print("========== SCANNER DEBUG ==========")
+        print("Return Code:", result.returncode)
+        print("STDOUT:")
+        print(result.stdout)
+        print("STDERR:")
+        print(result.stderr)
+        print("===================================")
+
+        if result.returncode != 0:
+            return f"Scanner crashed:\n{result.stderr}"
+
         output = result.stdout.strip()
 
         if not output:
-            return "No high-quality long setup today."
+            return "Scanner ran but returned empty output."
 
         return output
 
     except Exception as e:
-        return f"Scanner error:\n{str(e)}"
+        return f"Scanner exception:\n{str(e)}"
 
 
 # ==============================
